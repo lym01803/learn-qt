@@ -1,0 +1,35 @@
+Checks: >
+  clang-analyzer-*,
+  performance-*,
+  readability-*,
+  cert-*,
+  misc-*,
+  bugprone-*,
+  modernize-*,
+  cppcoreguidelines-*,
+  -misc-non-private-member-variables-in-classes,
+  -misc-unused-parameters,
+  -misc-no-recursion,
+  -performance-avoid-endl,
+  -readability-identifier-length,
+  -readability-qualified-auto,
+  -readability-convert-member-functions-to-static,
+  -readability-math-missing-parentheses,
+  -modernize-use-trailing-return-type,
+  -bugprone-unused-return-value,
+  -bugprone-easily-swappable-parameters,
+  -readability-make-member-function-const,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -modernize-use-nodiscard,
+  -modernize-pass-by-value,
+  -performance-move-const-arg,
+  -bugprone-empty-catch
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/LearnQt/(src|include)/.*'
+FormatStyle:     none
+
+CheckOptions:    
+  - key:             readability-function-cognitive-complexity.Threshold
+    value:           '20'
