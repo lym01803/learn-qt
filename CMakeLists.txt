@@ -86,23 +86,29 @@ target_link_libraries(main PRIVATE
     toy_concurrency
 )
 
+file(GLOB APP_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "resources/icons/*.svg")
 qt_add_qml_module(main
     URI "learn_qt"
     VERSION 1.0
     QML_FILES
         qml/Main.qml
         qml/Dir.qml
+        qml/PlainButton.qml
+        qml/NavigList.qml
     SOURCES
         include/view.h
         src/view.cpp
+    RESOURCES
+        ${APP_ICONS}
 )
 
 if(APPLE)
     set_target_properties(main PROPERTIES
         OUTPUT_NAME "LearnQt"
         MACOSX_BUNDLE_BUNDLE_NAME "LearnQt"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.lym01803.LearnQt"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.lym01803.dev"
     )
+    set(ENTITLEMENTS_FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/Entitlements.plist")
     if(IOS)
         set(asset_catalog_path "ios/Assets.xcassets")
         target_sources(main PRIVATE "${asset_catalog_path}")

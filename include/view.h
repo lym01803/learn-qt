@@ -11,8 +11,10 @@
 #include <QtCore/qobjectdefs.h>
 #include <QtCore/qstringview.h>
 #include <QtCore/qtmetamacros.h>
+#include <QtCore/qurl.h>
 #include <QtQml/qqmlengine.h>
 #include <QtQml/qqmlregistration.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -108,7 +110,41 @@ struct SortUtil {
   Projector *currentProjector = &sizeProjector; // no ownership
 };
 
-class FileListView: public QAbstractListModel { // NOLINT
+struct NavigUtil {
+  static auto splitPath(const std::filesystem::path &root, std::filesystem::path path) {
+    std::vector<std::filesystem::path> paths;
+    while (path != root) {
+      paths.emplace_back(path.filename());
+      path = path.parent_path();
+    }
+    std::ranges::reverse(paths);
+    return paths;
+  }
+
+  static data::DirView *getDirView(data::DirView &dv, const std::filesystem::path &path) {
+    const auto paths = splitPath(dv.root, path);
+    auto *dir = &dv;
+    for (const auto &file : paths) {
+      if (!(dir->isChildrenStable())) {
+        return nullptr;
+      }
+      bool found = false;
+      for (auto &ch : dir->children) {
+        if (ch.root.filename() == file) {
+          dir = &ch;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return nullptr;
+      }
+    }
+    return dir;
+  }
+};
+
+class FileListView: public QAbstractListModel {
   Q_OBJECT
   QML_ELEMENT
   QML_UNCREATABLE("FileListView is QML_UNCREATABLE")
@@ -119,7 +155,7 @@ public:
   FileListView(std::unique_ptr<SnapshotT> &snapshot, QObject *parent = nullptr)
     : QAbstractListModel{parent}, snapshot{snapshot} {}
 
-  enum class Role : int { Path = Qt::UserRole + 1, Size, Ratio, IsDir }; // NOLINT
+  enum class Role : int { Path = Qt::UserRole + 1, FileName, Size, Ratio, IsDir, Id }; // NOLINT
 
   QHash<int, QByteArray> roleNames() const override;
 
@@ -183,15 +219,84 @@ private:
   std::unique_ptr<SnapshotT> &snapshot;
 };
 
+
+class NavigListView: public QAbstractListModel {
+  Q_OBJECT
+  QML_ELEMENT
+  QML_UNCREATABLE("NavigListView is QML_UNCREATABLE")
+
+public:
+  using SnapshotT = data::DirView::Snapshot;
+
+  NavigListView(std::filesystem::path &root, std::unique_ptr<SnapshotT> &snapshot, 
+    QObject *parent = nullptr) : root{root}, QAbstractListModel{parent}, snapshot{snapshot} {
+    reCalcCache();
+  }
+
+  struct ItemT {
+    QString path;
+    int order;
+  };
+
+  enum class Role : int { Path = Qt::UserRole + 1, Order }; // NOLINT
+
+  QHash<int, QByteArray> roleNames() const override;
+
+  int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+
+  QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+
+  struct ResetGuard {
+    explicit ResetGuard(NavigListView *nlv) : nlv{nlv} {
+      nlv->beginResetModel();
+    }
+    ~ResetGuard() { release(); }
+    ResetGuard(const ResetGuard &other) = delete;
+    ResetGuard &operator=(const ResetGuard &other) = delete;
+    ResetGuard(ResetGuard &&other) noexcept : nlv{other.nlv} {
+      other.nlv = nullptr;
+    }
+    ResetGuard &operator=(ResetGuard &&other) noexcept {
+      release();
+      nlv = other.nlv;
+      other.nlv = nullptr;
+      return *this;
+    }
+  private:
+    void release() {
+      if (nlv != nullptr) {
+        nlv->reCalcCache();
+        nlv->endResetModel();
+        nlv = nullptr;
+      }
+    }
+    NavigListView *nlv = nullptr;
+  };
+
+  void reCalcCache();
+
+  ResetGuard scopedReset() {
+    return ResetGuard{this};
+  }
+private:
+  std::filesystem::path &root;
+  std::unique_ptr<SnapshotT> &snapshot;
+  std::vector<ItemT> cache;
+};
+
+
 class DirViewModel: public QObject {
   Q_OBJECT
   QML_ELEMENT
   QML_UNCREATABLE("DirViewModel is QML_UNCREATABLE")
 
-  Q_PROPERTY(QString path READ getRoot NOTIFY update);
+  Q_PROPERTY(QString path READ getRoot NOTIFY nodeChanged);
   Q_PROPERTY(QString size READ getSize NOTIFY update);
   Q_PROPERTY(long long numFiles READ getNumFiles NOTIFY update);
+  Q_PROPERTY(NavigListView * navigList READ getNavigListView CONSTANT);
   Q_PROPERTY(FileListView * fileList READ getFileListView CONSTANT);
+  Q_PROPERTY(bool isRoot READ isRoot NOTIFY nodeChanged);
+  Q_PROPERTY(long long isDir READ isDir NOTIFY nodeChanged);
 public:
   using SnapshotT = data::DirView::Snapshot;
 
@@ -224,21 +329,48 @@ public:
     return &flv;
   }
 
+  NavigListView *getNavigListView() {
+    view_details::get_logger()->info("&nlv: {}", (size_t)&nlv);
+    return &nlv;
+  }
+
+  bool isRoot() const {
+    return snapshot->path == dv.root;
+  }
+
+  bool isDir() const {
+    return snapshot->dvref.info.is_dir;
+  }
+
+  // called by qml, in GUI thread
+  Q_INVOKABLE void gotoChild(size_t id);
+
+  // called by qml, in GUI thread
+  Q_INVOKABLE void gotoAncestor(int order);
+
+  Q_INVOKABLE void openDir();
+
 signals:
   void update();
+  void nodeChanged();
 
 private:
   data::DirView dv;
+  /**
+   * @warning Actor: runner
+   */
+  data::DirView *dv_ptr = &dv;
   SortUtil sorter;
   /**
-   * @warning access snapshot ONLY via GUI thread
+   * @warning Actor: Qt GUI thread
    */
   std::unique_ptr<SnapshotT> snapshot;
+  NavigListView nlv;
   FileListView flv;
   
   std::atomic<bool> updateSignal{false};
   /**
-   * @warning access freq ONLY via runner
+   * @warning Actor: runner
    */
   FreqUtils freq{.name = "DirViewModel UI Freq"};
   playground::runner<async::cancellable_function<void>> runner;
@@ -249,13 +381,22 @@ private:
 
   auto eventPoll(std::stop_token token) -> async::co_task;
 
+  /**
+   * @warning Actor: runner
+   */
   SnapshotT getNewSnapshot();
 
   /**
-   * @warning access ONLY view GUI thread
+   * @warning Actor: Qt GUI thread
    */
   void updateSnapshot(std::unique_ptr<SnapshotT> newSnapshot);
+
+  /**
+   * @warning Actor: runner
+   */
+  void setDirViewPtr(data::DirView *newDvPtr);
 };
+
 
 class MainEntrance: public QObject {
   Q_OBJECT
@@ -271,11 +412,22 @@ public:
   Q_PROPERTY(State state READ state NOTIFY stateChanged);
   Q_PROPERTY(DirViewModel * dirViewModel READ dirViewModel NOTIFY stateChanged);
 
-  Q_INVOKABLE void setPath() {
-    const auto path = data::fs::path{"/Users/lym01803"};
-    dvm = std::make_unique<DirViewModel>(data::DirView{path}, nullptr);
-    QQmlEngine::setObjectOwnership(dvm.get(), QQmlEngine::CppOwnership);
-    setState(State::SelectedPath);
+  Q_INVOKABLE void setPath(const QString &qpath) {
+    // const auto path = data::fs::path{"/Users/lym01803"};
+    const QUrl qurl = QUrl(qpath);
+    const QString localPath = qurl.toLocalFile();
+    auto path = [&]() {
+#if defined (_WIN32)
+      return std::filesystem::path{localPath.toStdWString()};
+#else 
+      return std::filesystem::path{localPath.toStdString()};
+#endif
+    }();
+    if (!path.has_filename()) {
+      path = path.parent_path();
+    }
+    view_details::get_logger()->info("MainEntrance, search path: {}", path.string());
+    setDVMPath(path);
   }
 
   State state() const {
@@ -297,5 +449,11 @@ signals:
 private:
   State entranceState{State::Init};
   std::unique_ptr<DirViewModel> dvm;
+
+  void setDVMPath(const std::filesystem::path &path) {
+    dvm = std::make_unique<DirViewModel>(data::DirView{path}, nullptr);
+    QQmlEngine::setObjectOwnership(dvm.get(), QQmlEngine::CppOwnership);
+    setState(State::SelectedPath);
+  }
 };
 

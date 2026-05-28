@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import learn_qt 1.0
 
 Window {
@@ -19,18 +20,27 @@ Window {
     ColumnLayout {
       anchors.fill: parent
 
+      FolderDialog {
+        id: dialog
+        title: "选择根目录"
+        
+        onAccepted: {
+          entrance.setPath(selectedFolder);
+        }
+        onRejected: {}
+      }
+
       Button {
+        id: selectButton
         Layout.alignment: Qt.AlignHCenter
         topPadding: 15
         bottomPadding:15
         leftPadding: 15
         rightPadding: 15
 
-        text: "选择路径"
+        text: "选择根目录"
         font.pointSize: 24
-        onClicked: {
-          entrance.setPath();
-        }
+        onClicked: { dialog.open() }
       }
     }
   }

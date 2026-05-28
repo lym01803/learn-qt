@@ -49,10 +49,12 @@ struct DirView {
   using Path = fs::path;
   using fsize = utils::fsize;
   enum class Status : std::uint8_t { Done, Searching, NotInit, Error };
+  enum class ChildrenIterStatus : std::uint8_t { NotStable, Stable };
   struct Err {};
 
   struct MetaInfo {
     Status status = Status::NotInit;
+    ChildrenIterStatus ch_iter_status = DirView::ChildrenIterStatus::NotStable;
     bool is_dir = false;
     fsize volumn{0};
   };
@@ -122,6 +124,14 @@ struct DirView {
     return info.status;
   }
 
+  bool isChildrenStable() const {
+    if (info.is_dir) {
+      auto lc = lock();
+      return info.ch_iter_status == ChildrenIterStatus::Stable;
+    }
+    return true;
+  }
+
   DirView() = delete;
   
   DirView(const Path &path) : root{path}, 
@@ -142,6 +152,7 @@ struct DirView {
   };
 
   struct Snapshot {
+    DirView &dvref; // NOLINT
     size_t uid;
     MetaInfo info;
     Path path;
@@ -151,8 +162,8 @@ struct DirView {
   /**
    * @warning 内部会 acquire lock
    */
-  Snapshot getSnapshots() const {
-    Snapshot snapshot{.uid = uid, .path = root};
+  Snapshot getSnapshots() {
+    Snapshot snapshot{.dvref = *this, .uid = uid, .path = root};
     snapshot.info = {
       .status = getStatus(),
       .is_dir = info.is_dir,
@@ -179,20 +190,22 @@ namespace details {
 inline void processRegularFile(DirView &file, const fs::directory_entry &entry) {
   std::error_code ec;
   const auto size = entry.file_size(ec);
+  auto lock = file.lock();
   if (ec != std::error_code{}) {
     get_logger()->error("fail to get size of {}, msg: {}", entry.path().string(), ec.message());
-    auto lock = file.lock();
     file.info.status = DirView::Status::Error;
     return;
   }
-  auto lock = file.lock();
   file.info.volumn = DirView::fsize{static_cast<DirView::fsize::value_t>(size)};
   file.info.status = DirView::Status::Done;
 }
 
 } // namespace details
 
-template <std::invocable<DirView &> F>
+/**
+ * @warning callback 中不可读取 dir 及其 child (recursively) 的内容; 否则可能死锁
+ */
+template <std::invocable F>
 inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NOLINT
   if (abort.stop_requested()) {
     return;
@@ -201,6 +214,7 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
     {
       auto lock = dir.lock();
       dir.info.status = DirView::Status::Searching;
+      dir.info.ch_iter_status = DirView::ChildrenIterStatus::NotStable;
     }
     try {
       for (const auto &entry : fs::directory_iterator{
@@ -217,22 +231,19 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
             entry.path().string(), ec.message());
           continue;
         }
-
+        
         if (status.type() == fs::file_type::directory) {
-          auto &ch = [&]() -> DirView & {
-            auto lock = dir.lock();
-            return dir.children.emplace_back(entry.path(), true);
-          }();
-          searchDir(ch, std::forward<F>(callback), abort);
-        }
-
+          auto lock = dir.lock();
+          dir.children.emplace_back(entry.path(), true);
+        } 
+        
         else if (status.type() == fs::file_type::regular) {
           auto &ch = [&]() -> DirView & {
             auto lock = dir.lock();
             return dir.children.emplace_back(entry.path(), false);
           }();
           details::processRegularFile(ch, entry);
-          std::invoke(std::forward<F>(callback), ch);
+          std::invoke(std::forward<F>(callback));
         }
       }
     } catch (const fs::filesystem_error &e) {
@@ -242,7 +253,7 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
         auto lock = dir.lock();
         dir.info.status = DirView::Status::Error;
       }
-      std::invoke(std::forward<F>(callback), dir);
+      std::invoke(std::forward<F>(callback));
       return;
     } catch (...) {
       details::get_logger()->error("fail to searchDir {}", dir.root.string());
@@ -250,8 +261,18 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
         auto lock = dir.lock();
         dir.info.status = DirView::Status::Error;
       }
-      std::invoke(std::forward<F>(callback), dir);
+      std::invoke(std::forward<F>(callback));
       return;
+    }
+    {
+      auto lc = dir.lock();
+      dir.info.ch_iter_status = DirView::ChildrenIterStatus::Stable;
+    }
+    // 这里不持有 dir 的锁; 自此 dir.children 不发生变化, 迭代器不会失效, 引用也都有效
+    for (auto &ch : dir.children) {
+      if (ch.info.is_dir) {
+        searchDir(ch, std::forward<F>(callback), abort);
+      }
     }
     const auto volumn = dir.getVolumn().value_or(DirView::fsize{0});
     {
@@ -260,7 +281,7 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
       dir.info.status = DirView::Status::Done;
     }
   }
-  std::invoke(std::forward<F>(callback), dir);
+  std::invoke(std::forward<F>(callback));
 }
 
 } // namespace data
