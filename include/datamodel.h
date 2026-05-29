@@ -56,7 +56,7 @@ struct DirView {
     Status status = Status::NotInit;
     ChildrenIterStatus ch_iter_status = DirView::ChildrenIterStatus::NotStable;
     bool is_dir = false;
-    fsize volumn{0};
+    fsize volume{0};
   };
 
   size_t uid = details::getUID();
@@ -100,17 +100,17 @@ struct DirView {
   /**
    * @warning 内部会 acquire lock
    */
-  std::expected<fsize, Err> getVolumn() const {
+  std::expected<fsize, Err> getVolume() const {
     auto _lock = lock();
     if (info.status == Status::NotInit || info.status == Status::Error) {
       return std::unexpected{Err{}};
     }
     if (info.status == Status::Done) {
-      return info.volumn;
+      return info.volume;
     }
     if (info.is_dir) {
       return std::ranges::fold_left(children, fsize{0}, [](fsize v, const DirView &ch) {
-        return v + ch.getVolumn().value_or(fsize{0});
+        return v + ch.getVolume().value_or(fsize{0});
       });
     }
     return fsize{0};
@@ -167,7 +167,7 @@ struct DirView {
     snapshot.info = {
       .status = getStatus(),
       .is_dir = info.is_dir,
-      .volumn = getVolumn().value_or(fsize{0})
+      .volume = getVolume().value_or(fsize{0})
     };
 
     auto lc = lock();
@@ -177,7 +177,7 @@ struct DirView {
       sinfo.info = {
         .status = ch.getStatus(),
         .is_dir = ch.info.is_dir,
-        .volumn = ch.getVolumn().value_or(fsize{0})
+        .volume = ch.getVolume().value_or(fsize{0})
       };
       snapshot.children.emplace_back(std::move(sinfo));
     }
@@ -196,7 +196,7 @@ inline void processRegularFile(DirView &file, const fs::directory_entry &entry) 
     file.info.status = DirView::Status::Error;
     return;
   }
-  file.info.volumn = DirView::fsize{static_cast<DirView::fsize::value_t>(size)};
+  file.info.volume = DirView::fsize{static_cast<DirView::fsize::value_t>(size)};
   file.info.status = DirView::Status::Done;
 }
 
@@ -274,10 +274,10 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
         searchDir(ch, std::forward<F>(callback), abort);
       }
     }
-    const auto volumn = dir.getVolumn().value_or(DirView::fsize{0});
+    const auto volume = dir.getVolume().value_or(DirView::fsize{0});
     {
       auto lock = dir.lock();
-      dir.info.volumn = volumn;
+      dir.info.volume = volume;
       dir.info.status = DirView::Status::Done;
     }
   }

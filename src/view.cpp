@@ -179,7 +179,7 @@ DirViewModel::~DirViewModel() {
 }
 
 std::int64_t SortUtil::SizeProjector::operator()(const data::DirView::SnapshotInfo &info) {
-  return info.info.volumn.value();
+  return info.info.volume.value();
 }
 
 void SortUtil::sort(data::DirView::Snapshot &snapshot) {
@@ -220,12 +220,12 @@ QVariant FileListView::data(const QModelIndex &index, int role) const {
     }
     case Role::Size: {
       return QVariant::fromValue(QString::fromStdString(
-        std::format("{:2A}", item.info.volumn)
+        std::format("{:2A}", item.info.volume)
       ));
     }
     case Role::Ratio: {
-      return QVariant::fromValue(static_cast<double>(item.info.volumn.value()) 
-        / static_cast<double>(snapshot->info.volumn.value()));
+      return QVariant::fromValue(static_cast<double>(item.info.volume.value()) 
+        / static_cast<double>(snapshot->info.volume.value()));
     }
     case Role::IsDir: {
       return QVariant::fromValue(item.info.is_dir); 

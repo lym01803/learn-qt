@@ -25,7 +25,7 @@
 #include <thread>
 #include <toy_concurrency/async_tool.h>
 #include <toy_concurrency/concurrency_utils.h>
-#include <toy_concurrency/toyqueue.h>
+
 
 namespace demo {
 
@@ -296,7 +296,7 @@ class DirViewModel: public QObject {
   Q_PROPERTY(NavigListView * navigList READ getNavigListView CONSTANT);
   Q_PROPERTY(FileListView * fileList READ getFileListView CONSTANT);
   Q_PROPERTY(bool isRoot READ isRoot NOTIFY nodeChanged);
-  Q_PROPERTY(long long isDir READ isDir NOTIFY nodeChanged);
+  Q_PROPERTY(bool isDir READ isDir NOTIFY nodeChanged);
 public:
   using SnapshotT = data::DirView::Snapshot;
 
@@ -316,7 +316,7 @@ public:
   }
 
   QString getSize() const {
-    const auto size = snapshot->info.volumn;
+    const auto size = snapshot->info.volume;
     return QString::fromStdString(std::format("{:2A}", size));
   }
 
