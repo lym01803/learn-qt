@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <spdlog/async_logger.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -19,5 +20,31 @@ struct logger_t {
   spdlog::async_logger const *operator->() const noexcept;
   spdlog::async_logger *operator->() noexcept;
 };
+
+inline std::filesystem::path get_app_log_dir(const std::string &app_name) {
+  auto log_dir = [&]() -> std::filesystem::path {
+#ifndef NDEBUG
+    return std::filesystem::current_path() / "log";
+#else
+  #if defined (_WIN32)
+    const char *app_data = std::getenv("APPDATA");
+    if (app_data) {
+      return std::filesystem::path(std::string{app_data}) / app_name / "log";
+    }
+  #elif defined (__APPLE__)
+    const char *home = std::getenv("HOME");
+    if (home) {
+      return std::filesystem::path(std::string{home}) / "Library" 
+              / "Application Support" / app_name / "log";
+    }
+  #endif
+    return std::filesystem::current_path() / "log";
+#endif
+  }();
+  if (!std::filesystem::exists(log_dir)) {
+    std::filesystem::create_directories(log_dir);
+  }
+  return log_dir;
+}
 
 }

@@ -15,7 +15,8 @@
 namespace  {
 
 auto &&get_logger() {
-  static utils::logger_t logger{"main logger", "log/main.log", 1048576 * 10};
+  static const auto path = utils::get_app_log_dir("LearnQt") / "main.log";
+  static utils::logger_t logger{"main logger", path.string(), 1048576 * 10};
   return logger;
 }
 

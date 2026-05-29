@@ -153,7 +153,7 @@ struct QueryUtil { // NOLINT
   }
 
   async::co_task_with<std::string> getQuery(std::stop_token abort, 
-      std::chrono::milliseconds confirmInterval = std::chrono::milliseconds{300}) {
+      std::chrono::milliseconds confirmInterval = std::chrono::milliseconds{150}) {
     co_return co_await async::lift([this, abort, confirmInterval]() { 
       return this->getQueryImpl(abort, confirmInterval);
     }).on(worker);

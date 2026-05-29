@@ -32,13 +32,13 @@ endif ()
 include(FetchContent)
 
 FetchContent_Declare(toy_concurrency
-    GIT_REPOSITORY git@github.com:lym01803/toy_concurrency.git
-    GIT_TAG feecd19
+    GIT_REPOSITORY https://github.com/lym01803/toy_concurrency.git
+    GIT_TAG c4cdbebc559fe1152bff41c05d05178d7e19373d
 )
 FetchContent_MakeAvailable(toy_concurrency)
 
 FetchContent_Declare(spdlog
-    GIT_REPOSITORY git@github.com:gabime/spdlog.git
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.17.0
 )
 FetchContent_MakeAvailable(spdlog)

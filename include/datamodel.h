@@ -26,7 +26,8 @@ inline size_t getUID() {
 }
 
 inline auto &&get_logger() {
-  static utils::logger_t logger{"datamodel logger", "log/datamodel.log", 1048576 * 10};
+  static const auto path = utils::get_app_log_dir("LearnQt") / "datamodel.log";
+  static utils::logger_t logger{"datamodel logger", path.string(), 1048576 * 10};
   return logger;
 }
 

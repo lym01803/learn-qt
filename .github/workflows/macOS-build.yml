@@ -1,0 +1,52 @@
+name: macOS Build and Deploy
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build-macos: 
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.11.1'
+        host: 'mac'
+        target: 'desktop'
+
+    - name: Install Modern LLVM
+      run: brew install llvm
+
+    - name: CMake Configure
+      run: |
+        LLVM_PATH="$(brew --prefix llvm)"
+
+        export CC="$LLVM_PATH/bin/clang"
+        export CXX="$LLVM_PATH/bin/clang++"
+        
+        export CXXFLAGS="-I$LLVM_PATH/include/c++/v1"
+        export LDFLAGS="-L$LLVM_PATH/lib/c++ -Wl,-rpath,$LLVM_PATH/lib/c++"
+        
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=26.5
+
+        $CXX --version
+      
+    - name: CMake Configure
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=26.5
+    
+    - name: CMake Build 
+      run: cmake --build build --config Release
+
+    - name: Deploy and Package
+      run: macdeployqt build/LearnQt.app -dmg -qmldir=./qml
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LearnQt-macOS-${{ github.event.inputs.build_type }}-DMG
+        path: build/LearnQt.dmg
+

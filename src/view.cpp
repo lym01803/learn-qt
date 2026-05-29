@@ -1,5 +1,6 @@
 #include "toy_concurrency/async_tool.h"
 #include "utf8utils.hpp"
+#include "utils/logger_utils.h"
 #include <QDesktopServices>
 #include <QUrl>
 #include <QtCore/qcontainerfwd.h>
@@ -28,8 +29,9 @@
 namespace view_details {
   
 utils::logger_t& get_logger() {
+  static const auto path = utils::get_app_log_dir("LearnQt") / "viewmodel.log";
   static utils::logger_t logger{
-    "view model logger", "log/viewmodel.log", 1048576 * 10}; // NOLINT
+    "view model logger", path.string(), 1048576 * 10}; // NOLINT
   return logger;
 }
 
