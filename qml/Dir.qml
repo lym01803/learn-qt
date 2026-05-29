@@ -27,6 +27,28 @@ ColumnLayout {
     }
   }
 
+  TextField {
+    id: query
+    Layout.fillWidth: true 
+    Layout.topMargin: 4
+    Layout.bottomMargin: 4
+    Layout.leftMargin: 8
+    Layout.rightMargin: 8
+
+    placeholderText: "Search"
+    onTextEdited: {
+      column.vm.setQuery(text)
+    }
+  }
+
+  Connections {
+    target: column.vm 
+    
+    function onClearQuery() {
+      query.text = ""
+    }
+  }
+
   RowLayout {
     Layout.alignment: Qt.AlignTop
     Layout.leftMargin: 8

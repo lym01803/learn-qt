@@ -1,3 +1,5 @@
+#include "toy_concurrency/async_tool.h"
+#include "utf8utils.hpp"
 #include <QDesktopServices>
 #include <QUrl>
 #include <QtCore/qcontainerfwd.h>
@@ -8,6 +10,8 @@
 #include <QtCore/qvariant.h>
 #include <QtQml/qqmlengine.h>
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <datamodel.h>
@@ -15,7 +19,10 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <stop_token>
+#include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <view.h>
 
 namespace view_details {
@@ -56,8 +63,10 @@ DirViewModel::DirViewModel(data::DirView dirView, QObject *parent)
               updateSignal.store(true, std::memory_order::release);
             },
             stop.get_token());
-      }} {
+      }},
+      queryFuture{processQuery(stop.get_token()).get_future()} {
   QQmlEngine::setObjectOwnership(&flv, QQmlEngine::CppOwnership);
+
 }
 
 void DirViewModel::gotoChild(size_t id) {
@@ -116,10 +125,7 @@ auto DirViewModel::eventPoll(std::stop_token token) -> async::co_task { // NOLIN
 
   auto processEvent = async::lift([&, this]() {
     if (this->updateSignal.exchange(false, std::memory_order::acquire)) {
-      auto ssptr = std::make_unique<SnapshotT>(getNewSnapshot());
-      QMetaObject::invokeMethod(this, [this, ssptr = std::move(ssptr)]() mutable {
-        this->updateSnapshot(std::move(ssptr));
-      }, Qt::QueuedConnection);
+      this->refreshSnapshot();
     }
   }).on(this->runner);
 
@@ -137,6 +143,16 @@ DirViewModel::SnapshotT DirViewModel::getNewSnapshot() {
   return ss;
 }
 
+void DirViewModel::refreshSnapshot() {
+  auto ssptr = std::make_unique<SnapshotT>(getNewSnapshot());
+  QMetaObject::invokeMethod(this, 
+    [this, ssptr = std::move(ssptr)]() mutable {
+      this->updateSnapshot(std::move(ssptr));
+    }, 
+    Qt::QueuedConnection
+  );
+}
+
 void DirViewModel::updateSnapshot(std::unique_ptr<SnapshotT> newSnapshot) {
   {
     auto gd = flv.scopedReset(static_cast<int>(snapshot->children.size()),
@@ -152,6 +168,8 @@ void DirViewModel::updateSnapshot(std::unique_ptr<SnapshotT> newSnapshot) {
 void DirViewModel::setDirViewPtr(data::DirView *newDvPtr) {
   runner([this, newDvPtr]() {
     this->dv_ptr = newDvPtr;
+    emit this->clearQuery();
+    query.setQuery("");
     auto ssptr = std::make_unique<SnapshotT>(getNewSnapshot());
     QMetaObject::invokeMethod(
       this,
@@ -165,9 +183,54 @@ void DirViewModel::setDirViewPtr(data::DirView *newDvPtr) {
   });
 }
 
+auto DirViewModel::processQuery(std::stop_token token) -> async::co_task {
+  while (!token.stop_requested()) {
+    auto q = co_await query.getQuery(token);
+    co_await async::execute_by(runner);
+    if (q == "") {
+      view_details::get_logger()->info("sorter reset");
+      sorter.reset();
+      updateSignal.store(true, std::memory_order::release);
+    } else {
+      view_details::get_logger()->info("sorter set to query: {}", q);
+      co_await calcQueryScore(token, std::move(q));
+    }
+  }
+}
+
+auto DirViewModel::calcQueryScore(std::stop_token token, std::string q) 
+    -> async::co_task {
+  // run at runner
+  co_await async::execute_by(runner);
+  auto ts = std::chrono::high_resolution_clock::now();
+  auto children = getNewSnapshot().children; // move construct
+  QueryProjector qproj{q};
+  int i = 0;
+  for (const auto &ch : children) {
+    if (token.stop_requested()) {
+      co_return;
+    }
+    const auto score = qproj.calcScore(ch.path.filename().string());
+    qproj.scoreCache.insert({ch.uid, score});  
+    ++i;
+    if (i % 100 == 0) {
+      auto t = std::chrono::high_resolution_clock::now();
+      if (t - ts > std::chrono::milliseconds{5}) {
+        co_await async::execute_by(runner);
+        ts = std::chrono::high_resolution_clock::now();
+      } else {
+        ts = t;
+      }
+    }
+  }
+  sorter.currentProjector = std::make_unique<QueryProjector>(std::move(qproj));
+  updateSignal.store(true, std::memory_order::release);
+}
+
 DirViewModel::~DirViewModel() {
   stop.request_stop();
   try {
+    queryFuture.get();
     if (searchRunner.joinable()) {
       searchRunner.join();
     }
@@ -188,6 +251,64 @@ void SortUtil::sort(data::DirView::Snapshot &snapshot) {
       return (*currentProjector)(child);
     }
   );
+}
+
+std::int64_t QueryProjector::operator()(const data::DirView::SnapshotInfo &info) {
+  auto [iter, noKeyFound] = scoreCache.try_emplace(info.uid);
+  if (noKeyFound) {
+    iter->second = calcScore(info.path.filename().string());
+  }
+  return iter->second;
+}
+
+namespace {
+
+bool capital_match(std::string_view sv_l, std::string_view sv_r) {
+  if (sv_l == sv_r) {
+    return true;
+  }
+  if (sv_l.size() == 1 && sv_r.size() == 1) {
+    return std::tolower(sv_l[0]) == std::tolower(sv_r[0]);
+  }
+  return false;
+}
+
+}
+
+std::int64_t QueryProjector::calcScore(const std::string &str) {
+  constexpr int len = 5;
+  static std::array<std::int64_t, len> d_score = {-5, -4, -3, -2, -1};
+  static std::int64_t max_penalty = -20;
+
+  std::int64_t score = 0;
+  auto iter = utils::utf8_view{str}.begin();
+  auto end = utils::utf8_view{str}.end();
+  int pos = 0;
+
+  for (const auto s : utils::utf8_view{query}) {
+    int dis = 0;
+    std::int64_t subscore = 0;
+    while (iter != end && !capital_match(s, *iter)) {
+      if (dis < len) {
+        subscore += d_score[dis]; // NOLINT
+      }
+      ++dis;
+      ++iter;
+      ++pos;
+    }
+    if (iter == end) {
+      score += max_penalty;
+      continue;
+    }
+    if (pos == 0) {
+      subscore += 10;
+    } else if (pos < 5) {
+      subscore += 5 - pos;
+    }
+    score += subscore;
+    ++iter;
+  }
+  return score;
 }
 
 QHash<int, QByteArray> FileListView::roleNames() const {
@@ -224,6 +345,9 @@ QVariant FileListView::data(const QModelIndex &index, int role) const {
       ));
     }
     case Role::Ratio: {
+      if (snapshot->info.volume.value() == 0) {
+        return QVariant::fromValue(1. / static_cast<double>(snapshot->children.size()));
+      }
       return QVariant::fromValue(static_cast<double>(item.info.volume.value()) 
         / static_cast<double>(snapshot->info.volume.value()));
     }

@@ -17,14 +17,20 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <datamodel.h>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <qqmlintegration.h>
 #include <stop_token>
 #include <thread>
 #include <toy_concurrency/async_tool.h>
 #include <toy_concurrency/concurrency_utils.h>
+#include <unordered_map>
+#include <utility>
 
 
 namespace demo {
@@ -96,6 +102,70 @@ struct FreqUtils {
   }
 };
 
+struct QueryUtil { // NOLINT
+  struct QInfo {
+    using TimePoint = std::chrono::steady_clock::time_point;
+    std::string text;
+    TimePoint ts;
+  };
+
+  std::optional<QInfo> query;
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::stop_source stop;
+  playground::runner<async::cancellable_function<void>> worker{4};
+
+  ~QueryUtil() {
+    stop.request_stop();
+    cv.notify_all();
+  }
+
+  // 等待 confirmInterval 以确认没有新 query 产生
+  std::string getQueryImpl(std::stop_token abort,
+                           std::chrono::milliseconds confirmInterval) {
+    auto qinfo = [this, abort]() -> QInfo {
+      std::stop_callback callback{abort, [this]() {
+        cv.notify_all();
+      }};
+      std::unique_lock lock{mutex};
+      cv.wait(lock, [this, abort]() {
+        return stop.stop_requested() || abort.stop_requested() || query;
+      });
+      if (stop.stop_requested() || abort.stop_requested()) {
+        return {.text = "", .ts = QInfo::TimePoint{}};
+      }
+      return std::exchange(query, std::nullopt).value();
+    }(); // lock released
+
+    while (!stop.stop_requested() && !abort.stop_requested() && qinfo.text != "") {
+      std::this_thread::sleep_until(qinfo.ts + confirmInterval);
+      auto detect = [this]() -> std::optional<QInfo> {
+        std::unique_lock lock{mutex};
+        return std::exchange(query, std::nullopt);
+      }();
+      if (detect.has_value()) {
+        qinfo = std::move(detect).value();
+      } else {
+        break;
+      }
+    }
+    return qinfo.text;
+  }
+
+  async::co_task_with<std::string> getQuery(std::stop_token abort, 
+      std::chrono::milliseconds confirmInterval = std::chrono::milliseconds{300}) {
+    co_return co_await async::lift([this, abort, confirmInterval]() { 
+      return this->getQueryImpl(abort, confirmInterval);
+    }).on(worker);
+  }
+
+  void setQuery(std::string query) {
+    std::unique_lock lock{mutex};
+    this->query = QInfo{.text = std::move(query), .ts = std::chrono::steady_clock::now()};
+    cv.notify_one();
+  }
+};
+
 struct SortUtil {
   struct Projector { // NOLINT
     virtual ~Projector() = default;
@@ -105,9 +175,22 @@ struct SortUtil {
     std::int64_t operator()(const data::DirView::SnapshotInfo &info) override;
   };
   void sort(data::DirView::Snapshot &snapshot);
+  void reset() {
+    currentProjector = std::make_unique<SizeProjector>();
+  }
 
-  SizeProjector sizeProjector;
-  Projector *currentProjector = &sizeProjector; // no ownership
+  std::unique_ptr<Projector> currentProjector = std::make_unique<SizeProjector>();
+};
+
+struct QueryProjector : public SortUtil::Projector {
+  std::int64_t operator()(const data::DirView::SnapshotInfo &info) override;
+
+  QueryProjector(const std::string &query) : query{query} {}
+
+  std::int64_t calcScore(const std::string &str);
+
+  std::string query;
+  std::unordered_map<size_t, std::int64_t> scoreCache;
 };
 
 struct NavigUtil {
@@ -350,9 +433,16 @@ public:
 
   Q_INVOKABLE void openDir();
 
+  Q_INVOKABLE void setQuery(const QString &str) {
+    auto q = str.toStdString();
+    view_details::get_logger()->info("Search Query: {}", q);
+    query.setQuery(std::move(q));
+  }
+
 signals:
   void update();
   void nodeChanged();
+  void clearQuery();
 
 private:
   data::DirView dv;
@@ -360,6 +450,9 @@ private:
    * @warning Actor: runner
    */
   data::DirView *dv_ptr = &dv;
+  /**
+   * @warning Actor: runner
+   */
   SortUtil sorter;
   /**
    * @warning Actor: Qt GUI thread
@@ -379,12 +472,20 @@ private:
   async::task_future<void> eventPollFuture;
   std::thread searchRunner;
 
+  QueryUtil query;
+  async::task_future<void> queryFuture;
+
   auto eventPoll(std::stop_token token) -> async::co_task;
 
   /**
    * @warning Actor: runner
    */
   SnapshotT getNewSnapshot();
+
+  /**
+   * @warning Actor: runner
+   */
+  void refreshSnapshot();
 
   /**
    * @warning Actor: Qt GUI thread
@@ -395,6 +496,10 @@ private:
    * @warning Actor: runner
    */
   void setDirViewPtr(data::DirView *newDvPtr);
+
+  auto processQuery(std::stop_token token) -> async::co_task;
+
+  auto calcQueryScore(std::stop_token token, std::string q) -> async::co_task;
 };
 
 

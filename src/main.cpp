@@ -1,3 +1,4 @@
+#include "utf8utils.hpp"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QtCore/qvariant.h>
@@ -9,6 +10,7 @@
 #include <toy_concurrency/toyqueue.h>
 #include <utils/logger_utils.h>
 #include <view.h>
+#include <iostream>
 
 namespace  {
 
