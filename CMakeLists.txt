@@ -58,7 +58,7 @@ message(STATUS "  Version: ${Qt6_VERSION}")
 message(STATUS "  Path: ${Qt6_DIR}")
 message(STATUS "  QtCore Include Path: ${Qt6Core_INCLUDE_DIRS}")
 
-qt_standard_project_setup(REQUIRES 6.11)
+qt_standard_project_setup(REQUIRES 6.10)
 
 add_library(datamodel src/datamodel.cpp)
 target_link_libraries(datamodel 

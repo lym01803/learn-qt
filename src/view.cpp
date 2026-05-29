@@ -104,7 +104,7 @@ void DirViewModel::openDir() {
   }
   const auto qpath = [&]() {
 #if defined (_WIN32) 
-    return QString::fromStdString(path.wstring());
+    return QString::fromStdWString(path.wstring());
 #else
     return QString::fromStdString(path.string());
 #endif

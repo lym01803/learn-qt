@@ -1,0 +1,45 @@
+name: Windows Build and Deploy
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build-windows: 
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.10.3'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2022_64'
+        aqtversion: '>=3.2.0'
+
+    - name: CMake Configure
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+    - name: CMake Build 
+      run: cmake --build build --config Release
+
+    - name: Deploy and Package
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path dist
+        
+        Copy-Item build\Release\main.exe -Destination dist\
+        
+        windeployqt --no-translations --compiler-runtime --qmldir .\qml dist\main.exe
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LearnQt-Windows-Release
+        path: dist/
