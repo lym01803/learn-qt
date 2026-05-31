@@ -33,55 +33,13 @@
 #include <utility>
 
 
-namespace demo {
-
-struct SimpleData {
-  template <std::invocable F> 
-  void modify(F &&callback) {
-    text = text + "A";
-    std::invoke(std::forward<F>(callback));
-  }
-  std::string const &get() const {
-    return text; 
-  }
-
-  std::string text;
-};
-
-class SimpleViewModel: public QObject {
-  Q_OBJECT
-  QML_ELEMENT
-  QML_UNCREATABLE("SimpleViewModel is QML_UNCREATABLE")
-
-  Q_PROPERTY(QString text READ text NOTIFY textChanged)
-
-public:
-  QString text() const { 
-    return {data.get().c_str()}; 
-  }
-
-  Q_INVOKABLE void onclick() {
-    data.modify([this]() {
-      emit textChanged();
-    });
-  }
-
-  SimpleViewModel(SimpleData &data) : data{data} {}
-
-signals:
-  void textChanged();
-
-private:
-  SimpleData &data; // 生命周期足够长
-};
-
-} // namespace demo
-
 namespace view_details {
 
 utils::logger_t& get_logger();
 
 } // namespace view_details
+
+std::optional<std::filesystem::path> &getGlobalSearchPath();
 
 struct FreqUtils {
   std::string name = "Freq Stats";
@@ -525,6 +483,18 @@ class MainEntrance: public QObject {
   QML_ELEMENT
 
 public:
+  MainEntrance() {
+    if (getGlobalSearchPath().has_value()) {
+      entranceState = State::SelectedPath;
+      auto path = getGlobalSearchPath().value();
+      if (!path.has_filename()) {
+        path = path.parent_path();
+      }
+      view_details::get_logger()->info("Specified by argv, search path: {}", path.string());
+      setDVMPath(path);
+    }
+  }
+
   enum class State : int { // NOLINT
     Init,
     SelectedPath
@@ -535,7 +505,6 @@ public:
   Q_PROPERTY(DirViewModel * dirViewModel READ dirViewModel NOTIFY stateChanged);
 
   Q_INVOKABLE void setPath(const QString &qpath) {
-    // const auto path = data::fs::path{"/Users/lym01803"};
     const QUrl qurl = QUrl(qpath);
     const QString localPath = qurl.toLocalFile();
     auto path = [&]() {

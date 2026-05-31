@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string_view>
 #include <thread>
@@ -36,6 +37,12 @@ utils::logger_t& get_logger() {
 }
 
 } // namespace view_detail;
+
+// 实例化线程安全, 读写非线程安全, 仅在 main 入口处写入
+std::optional<std::filesystem::path> &getGlobalSearchPath() {
+  static std::optional<std::filesystem::path> path;
+  return path;
+}
 
 namespace  {
 
