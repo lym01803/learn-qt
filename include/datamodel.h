@@ -125,14 +125,6 @@ struct DirView {
     return info.status;
   }
 
-  bool isChildrenStable() const {
-    if (info.is_dir) {
-      auto lc = lock();
-      return info.ch_iter_status == ChildrenIterStatus::Stable;
-    }
-    return true;
-  }
-
   DirView() = delete;
   
   DirView(const Path &path) : root{path}, 
@@ -216,6 +208,9 @@ inline void searchDir(DirView &dir, F &&callback, std::stop_token abort) { // NO
       auto lock = dir.lock();
       dir.info.status = DirView::Status::Searching;
       dir.info.ch_iter_status = DirView::ChildrenIterStatus::NotStable;
+      if (dir.children.size() > 0) {
+        dir.children.clear();
+      }
     }
     try {
       for (const auto &entry : fs::directory_iterator{

@@ -58,21 +58,15 @@ DirViewModel::DirViewModel(data::DirView dirView, QObject *parent)
       nlv{dv.root, snapshot, nullptr},
       flv{snapshot, nullptr},
       eventPollFuture{eventPoll(stop.get_token()).get_future()},
-      searchRunner{[this]() {
-        data::searchDir(
-            dv,
-            [this]() {
-              updateSignal.store(true, std::memory_order::release);
-            },
-            stop.get_token());
-      }},
       queryFuture{processQuery(stop.get_token()).get_future()} {
   QQmlEngine::setObjectOwnership(&flv, QQmlEngine::CppOwnership);
-
+  runner([this]() { this->searchTask(); });
 }
 
 void DirViewModel::gotoChild(size_t id) {
-  if (snapshot->dvref.isChildrenStable()) {
+  auto lock = snapshot->dvref.lock();
+  if (snapshot->dvref.info.ch_iter_status ==
+      data::DirView::ChildrenIterStatus::Stable) {
     for (auto &ch : snapshot->dvref.children) {
       if (ch.uid == id) {
         auto *new_dv_ptr = &ch;
@@ -136,6 +130,26 @@ auto DirViewModel::eventPoll(std::stop_token token) -> async::co_task { // NOLIN
     co_await sleep(sleepTime);
     co_await processEvent;
     pollFreq.record(std::chrono::system_clock::now());
+  }
+}
+
+void DirViewModel::searchTask() {
+  bool expected = true;
+  if (searchIdle.compare_exchange_strong(expected, false, 
+      std::memory_order::acquire, std::memory_order::relaxed)) {
+    emit searchIdleChange();
+    auto *dir_view_ptr = dv_ptr;
+    searchRunner([this, dir_view_ptr]() {
+      data::searchDir(
+        *dir_view_ptr, 
+        [this]() {
+          updateSignal.store(true, std::memory_order::release);
+        }, 
+        stop.get_token()
+      );
+      searchIdle.store(true, std::memory_order::release);
+      emit searchIdleChange();
+    });
   }
 }
 
@@ -233,9 +247,6 @@ DirViewModel::~DirViewModel() {
   stop.request_stop();
   try {
     queryFuture.get();
-    if (searchRunner.joinable()) {
-      searchRunner.join();
-    }
     eventPollFuture.get();
   } catch(...) {
     view_details::get_logger()->error("Uncaught exception during ~DirViewModel().");
@@ -392,9 +403,9 @@ void NavigListView::reCalcCache() {
   auto paths = NavigUtil::splitPath(root, snapshot->path);
   cache.reserve(paths.size() + 1);
   cache.emplace_back(
-    QString::fromStdString(root.string()), static_cast<int>(paths.size()));
+    QString::fromStdU16String(root.u16string()), static_cast<int>(paths.size()));
   for (int i = 0; i < paths.size(); i++) {
-    cache.emplace_back(QString::fromStdString(paths[i].string()), 
+    cache.emplace_back(QString::fromStdU16String(paths[i].u16string()), 
                        static_cast<int>(paths.size() - 1 - i));
   }
 }

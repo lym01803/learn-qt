@@ -89,6 +89,14 @@ ColumnLayout {
     }
 
     PlainButton {
+      text: "Redo"
+      onClicked: {
+        column.vm.redoSearch()
+      }
+      enabled: column.vm.isSearchIdle
+    }
+
+    PlainButton {
       text: "Open"
       onClicked: {
         column.vm.openDir()

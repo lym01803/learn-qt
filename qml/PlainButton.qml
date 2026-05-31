@@ -8,12 +8,13 @@ BasicCtrl.Button {
   bottomPadding: 4
   leftPadding: 8
   rightPadding: 8
+  property real radius: 6
 
   background: Rectangle {
     border.width: 1
     border.color: "#e0e0e0"
     color: (parent.enabled && parent.hovered) ? "#eeeeee" : "#ffffff"
-    radius: 6
+    radius: parent.radius
   }
 
   opacity: {

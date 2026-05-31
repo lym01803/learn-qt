@@ -30,13 +30,14 @@ Window {
         onRejected: {}
       }
 
-      Button {
+      PlainButton {
         id: selectButton
         Layout.alignment: Qt.AlignHCenter
         topPadding: 15
-        bottomPadding:15
-        leftPadding: 15
-        rightPadding: 15
+        bottomPadding: 15
+        leftPadding: 20
+        rightPadding: 20
+        radius: 12
 
         text: "选择根目录"
         font.pointSize: 24

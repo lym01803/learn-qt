@@ -208,7 +208,8 @@ struct NavigUtil {
     const auto paths = splitPath(dv.root, path);
     auto *dir = &dv;
     for (const auto &file : paths) {
-      if (!(dir->isChildrenStable())) {
+      auto lock = dir->lock();
+      if (dir->info.ch_iter_status != data::DirView::ChildrenIterStatus::Stable) {
         return nullptr;
       }
       bool found = false;
@@ -380,6 +381,7 @@ class DirViewModel: public QObject {
   Q_PROPERTY(FileListView * fileList READ getFileListView CONSTANT);
   Q_PROPERTY(bool isRoot READ isRoot NOTIFY nodeChanged);
   Q_PROPERTY(bool isDir READ isDir NOTIFY nodeChanged);
+  Q_PROPERTY(bool isSearchIdle READ isSearchIdle NOTIFY searchIdleChange);
 public:
   using SnapshotT = data::DirView::Snapshot;
 
@@ -395,7 +397,7 @@ public:
 
   QString getRoot() const {
     const auto path = snapshot->path;
-    return QString::fromStdString(path.string());
+    return QString::fromStdU16String(path.u16string());
   }
 
   QString getSize() const {
@@ -425,6 +427,10 @@ public:
     return snapshot->dvref.info.is_dir;
   }
 
+  bool isSearchIdle() const {
+    return searchIdle.load(std::memory_order::acquire);
+  }
+
   // called by qml, in GUI thread
   Q_INVOKABLE void gotoChild(size_t id);
 
@@ -439,10 +445,15 @@ public:
     query.setQuery(std::move(q));
   }
 
+  Q_INVOKABLE void redoSearch() {
+    runner([this]() { this->searchTask(); });
+  }
+
 signals:
   void update();
   void nodeChanged();
   void clearQuery();
+  void searchIdleChange();
 
 private:
   data::DirView dv;
@@ -470,12 +481,18 @@ private:
   
   std::stop_source stop;
   async::task_future<void> eventPollFuture;
-  std::thread searchRunner;
+  std::atomic<bool> searchIdle{true};
+  playground::runner<async::cancellable_function<void>> searchRunner{1};
 
   QueryUtil query;
   async::task_future<void> queryFuture;
 
   auto eventPoll(std::stop_token token) -> async::co_task;
+
+  /**
+   * @warning Actor: runner
+   */
+  void searchTask();
 
   /**
    * @warning Actor: runner
