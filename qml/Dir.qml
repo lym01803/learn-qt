@@ -11,6 +11,12 @@ ColumnLayout {
   id: column
   required property DirViewModel vm
 
+  TapHandler {
+    onTapped: {
+      column.forceActiveFocus()
+    }
+  }
+
   NavigList {
     Layout.fillWidth: true
     Layout.topMargin: 8
@@ -27,7 +33,7 @@ ColumnLayout {
     }
   }
 
-  TextField {
+  BasicCtrl.TextField {
     id: query
     Layout.fillWidth: true 
     Layout.topMargin: 4
@@ -38,6 +44,17 @@ ColumnLayout {
     placeholderText: "Search"
     onTextEdited: {
       column.vm.setQuery(text)
+    }
+
+    background: Rectangle {
+      border.width: 1
+      border.color: "#e0e0e0"
+      radius: 8
+    }
+
+    Keys.onEscapePressed: (event) => {
+      focus = false 
+      event.accept = true
     }
   }
 
